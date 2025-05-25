@@ -52,11 +52,15 @@ No installation needed.
 - [ ] Auto-detection of wall edges and corners
 - [ ] Support for decorations, stairs, and other dungeon features
 
+## 🔥 Compatibility
+
+This tool is **compatible with RPG Maker MZ and RPG Maker MV**.  
+However, support for MV is **not a development priority** and may not be guaranteed for future updates.
+
 ## 🙌 Credits
 
 - Dungeon generation by [Donjon](https://donjon.bin.sh/)
-- Map conversion tool by [YourNameHere]  
-(Feel free to edit and replace with your name or team name)
+- Map conversion tool by [Angel P]  
 
 ## 📜 License
 
