@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dungeon Converter - Donjon 2 RMMZ</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      display: flex;
+      height: 100vh;
+    }
+
+    .left {
+      width: 256px;
+      background-color: #222;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding-top: 10px;
+      padding-bottom: 50px;
+      overflow: auto;
+      gap: 10px;
+    }
+
+    .right-content {
+      display: flex;
+      gap: 20px;
+      width: 100%;
+      max-width: 1600px;
+      align-items: flex-start;
+    }
+
+    .rleft {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      flex: 1 1 auto;
+      /* Cresce conforme o canvas */
+      min-width: 300px;
+    }
+
+    .rright {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      flex: 0 0 400px;
+      /* Mantém o output com 400px fixo */
+    }
+
+    .rleft canvas {
+      max-width: 100%;
+    }
+
+    .rright textarea {
+      width: 100%;
+      min-height: 400px;
+    }
+
+    .right {
+      flex: 1;
+      background-color: #333;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      color: white;
+      padding: 10px;
+      overflow: auto;
+    }
+
+    .right input[type="file"] {
+      margin: 10px;
+    }
+
+    .rleft,
+    .rright {
+      background-color: #222;
+      border: 1px solid #555;
+      padding: 10px;
+      min-height: fit-content;
+    }
+
+    .right h2 {
+      margin-top: 0;
+    }
+
+    canvas {
+      cursor: pointer;
+    }
+
+    label {
+      color: white;
+    }
+
+    @media (prefers-color-scheme: light) {
+      label {
+        color: black;
+      }
+    }
+
+    .tile-preview {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .preview-row {
+      display: flex;
+      gap: 10px;
+    }
+
+    .preview-block {
+      width: 256px;
+      height: 256px;
+      background-color: #555;
+      display: flex;
+      flex-wrap: wrap;
+    }
+
+    .preview-tile {
+      width: 32px;
+      height: 32px;
+      image-rendering: pixelated;
+    }
+
+    .btn-finish {
+      width: 100%;
+      margin-left: 20%;
+    }
+
+    #btn-finish {
+      width: 80%;
+      height: 20px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="left">
+    <div>
+      <label for="wallThickness">Wall Thickness:</label>
+      <input type="number" id="wallThickness" value="2" min="1" max="10" style="width: 50px;">
+    </div>
+    <div>
+      <label><input type="radio" name="tileType" value="wall" checked> Wall</label>
+      <label><input type="radio" name="tileType" value="ceiling"> Ceiling</label>
+      <label><input type="radio" name="tileType" value="floor"> Floor</label>
+    </div>
+    <canvas id="tileCanvas" width="256" height="896"></canvas>
+    <div class="tile-preview">
+      <div class="preview-row">
+        <canvas id="wallPreview" width="32" height="32"></canvas>
+        <canvas id="ceilingPreview" width="32" height="32"></canvas>
+      </div>
+      <div class="preview-block" id="floorPreview"></div>
+    </div>
+    <div class="btn-finish">
+      <button id="btn-finish">Finish</button>
+    </div>
+  </div>
+
+  <div class="right">
+    <h1>Import your Dungeon JSON</h1>
+    <input type="file" id="jsonFile" accept=".json">
+    <div class="right-content">
+      <div class="rleft">
+        <h2>Preview</h2>
+        <canvas id="dungeonPreview"></canvas>
+      </div>
+      <div class="rright">
+        <h2>Output</h2>
+        <textarea id="jsonOutput"
+          style="width: 90%; min-height: 300px; overflow: auto; background: #222; padding: 10px; margin-top: 20px; border: 1px solid #555; color: white;"></textarea>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('tileCanvas');
+    const ctx = canvas.getContext('2d');
+    const tileSize = 32;
+    const previewTileSize = 10;
+    const tileTypeRadios = document.getElementsByName('tileType');
+
+    const wallPreview = document.getElementById('wallPreview').getContext('2d');
+    const ceilingPreview = document.getElementById('ceilingPreview').getContext('2d');
+    const floorPreview = document.getElementById('floorPreview');
+    const jsonFileInput = document.getElementById('jsonFile');
+    const jsonOutput = document.getElementById('jsonOutput');
+    const dungeonPreview = document.getElementById('dungeonPreview');
+    const dungeonCtx = dungeonPreview.getContext('2d');
+
+    document.onreadystatechange = () => {
+      // Clearing cache
+      jsonOutput.value = "";
+      jsonFileInput.value = "";
+    }
+
+    const image = new Image();
+    image.src = 'dungeon_tiles.png';
+    image.onload = () => ctx.drawImage(image, 0, 0);
+
+    const selections = { wall: null, ceiling: null, floor: [] };
+    let mapName = "Auto Generated";
+
+    document.getElementById('btn-finish').addEventListener('click', () => {
+      generateRmmzMap();
+    });
+
+
+    function generateRmmzMap() {
+      if (!window.currentExpandedRows) {
+        alert('Please load a dungeon first.');
+        return;
+      }
+      if (!selections.ceiling) {
+        alert('Please select a ceil first.');
+        return;
+      }
+      if (!selections.wall) {
+        alert('Please select a wall first.');
+        return;
+      }
+      if (!selections.floor) {
+        alert('Please select a floor first.');
+        return;
+      }
+
+      const expandedRows = window.currentExpandedRows;
+      const width = expandedRows[0].length;
+      const height = expandedRows.length;
+
+      const map = {
+        "autoplayBgm": false, "autoplayBgs": false, "battleback1Name": "", "battleback2Name": "", "specifyBattleback": false,
+        "bgm": { "name": "", "pan": 0, "pitch": 100, "volume": 90 },
+        "bgs": { "name": "", "pan": 0, "pitch": 100, "volume": 90 },
+        "disableDashing": false, "encounterList": [], "encounterStep": 30,
+        "parallaxLoopX": false, "parallaxLoopY": false, "parallaxName": "", "parallaxShow": true, "parallaxSx": 0, "parallaxSy": 0, "scrollType": 0,
+        "note": "Base Generated By Donjon", "tilesetId": 4,
+        "height": height, "width": width, "displayName": window.mapName,
+        "events": [],
+        data: []
+      };
+
+      function getCoords(x, y) {
+        let base = 2048;
+        y = y / 32;
+        x = x / 32;
+        let method = "none";
+
+        if (y >= 12) {
+          y -= 12;
+          y *= 8;
+          base = 1536;
+        } else if (y >= 6) {
+          base += 1536;
+          method = y == 6 || y == 8 || y == 10 ? "ceil" : "wall";
+          x *= 48;
+          y *= 384;
+        } else {
+          method = "ceil";
+          x *= 48;
+          y *= 384;
+        }
+        return { base: base + x + y, method: method }
+      }
+
+      const ceilBase = getCoords(selections.ceiling.x, selections.ceiling.y);
+      const wallBase = getCoords(selections.wall.x, selections.wall.y);
+      const floorBase = selections.floor.map(coord => {
+        return getCoords(coord.x, coord.y);
+      })
+
+      for (let layer = 0; layer < 6; layer++) {
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            let tileId = 0;
+
+            if (layer !== 0) {
+              map.data.push(tileId);
+              continue;
+            }
+
+            const cell = expandedRows[y][x];
+            let base = {};
+            if (cell.color === '#fff' || cell.color === '#85ff7a') {
+              base = floorBase[(Math.floor(Math.random() * floorBase.length))];
+            } else if (cell.color === '#000') {
+              base = ceilBase;
+            } else if (cell.color === '#444') {
+              base = wallBase;
+            }
+
+            map.data.push(calculateTile(base, cell, y, x, width, height));
+          }
+        }
+      }
+
+      jsonOutput.value = JSON.stringify(map, null, 2);
+    }
+
+
+    function calculateTile(base, cell, y, x, width, height) {
+      switch (base.method) {
+        case "ceil":
+          return calculateCeil(base.base, cell, y, x, width, height);
+        case "wall":
+          return calculateWall(base.base, cell, y, x, width, height);
+        default:
+          return calculateNone(base.base);
+      }
+    }
+
+    function calculateNone(tileId) {
+      return tileId;
+    }
+
+    function calculateCeil(tileId, cell, y, x, width, height) {
+      const expandedRows = window.currentExpandedRows;
+
+      const left = (x > 0) ? expandedRows[y][x - 1].color : "#000";
+      const up = (y > 0) ? expandedRows[y - 1][x].color : "#000";
+      const right = (x < width - 1) ? expandedRows[y][x + 1].color : "#000";
+      const down = (y < height - 1) ? expandedRows[y + 1][x].color : "#000";
+
+      const upleft = (x > 0) && (y > 0) ? expandedRows[y - 1][x - 1].color : "#000";
+      const upright = (y > 0) && (x < width - 1) ? expandedRows[y - 1][x + 1].color : "#000";
+      const downright = (y < height - 1) && (x < width - 1) ? expandedRows[y + 1][x + 1].color : "#000";
+      const downleft = (x > 0) && (y < height - 1) ? expandedRows[y + 1][x - 1].color : "#000";
+
+      const neighbors = [left, up, right, down];
+      const diagonalNeighbors = [upleft, upright, downright, downleft];
+
+      if (neighbors.some(n => n !== cell.color)) {
+        // 16, l OK
+        // 17, l ur OK
+        // 18, l dr OK
+        // 19, l udr OK
+        // 32, l r OK
+        // 34, l u OK
+        // 35, l u dr OK
+        // 40, l d OK
+        // 41, l d ur OK
+        // 42, l u r OK
+        // 43, l u d OK
+        // 44, l r d OK
+        // 47, all OK
+        // 20, u OK
+        // 21, u dr OK
+        // 22, u dl OK
+        // 23, u drl OK
+        // 33, u d OK
+        // 36, u r OK
+        // 37, u r dl OK
+        // 45, u r d OK
+        // 24, r OK
+        // 25, r dl OK
+        // 26, r ul OK
+        // 27, r dul OK
+        // 38, r d OK
+        // 39, r d ul OK
+        // 28, d OK
+        // 29, d ur OK
+        // 30, d ul OK
+        // 31, d ulr OK
+
+        // LEFT
+        if (left !== cell.color) {
+          if (up !== cell.color) {
+            if (right !== cell.color) {
+              if (down !== cell.color) {
+                tileId += 47
+              } else {
+                tileId += 42
+              }
+            } else if (down !== cell.color) {
+              tileId += 43
+            } else {
+              if (downright !== cell.color) {
+                tileId += 35
+              } else {
+                tileId += 34
+              }
+            }
+          } else if (right !== cell.color) {
+            if (down !== cell.color) {
+              tileId += 44
+            } else {
+              tileId += 32
+            }
+          } else if (down !== cell.color) {
+            if (upright != cell.color) {
+              tileId += 41
+            } else {
+              tileId += 40
+            }
+          } else {
+            if (upright != cell.color) {
+              if (downright != cell.color) {
+                tileId += 19
+              } else {
+                tileId += 17
+              }
+            } else if (downright != cell.color) {
+              tileId += 18
+            } else {
+              tileId += 16
+            }
+          }
+          // UP
+        } else if (up !== cell.color) {
+          if (right !== cell.color) {
+            if (down !== cell.color) {
+              tileId += 45;
+            } else {
+              if (downleft != cell.color) {
+                tileId += 37;
+              } else {
+                tileId += 36;
+              }
+            }
+          } else if (down !== cell.color) {
+            tileId += 33;
+          } else {
+            if (downright !== cell.color) {
+              if (downleft !== cell.color) {
+                tileId += 23;
+              } else {
+                tileId += 21;
+              }
+            } else if (downleft !== cell.color) {
+              tileId += 22;
+            } else {
+              tileId += 20;
+            }
+          }
+          // RIGHT
+        } else if (right !== cell.color) {
+          if (down !== cell.color) {
+            if (upleft !== cell.color) {
+              tileId += 39;
+            } else {
+              tileId += 38;
+            }
+          } else {
+            if (upleft !== cell.color) {
+              if (downleft !== cell.color) {
+                tileId += 27;
+              } else {
+                tileId += 26;
+              }
+            } else if (downleft !== cell.color) {
+              tileId += 25;
+            } else {
+              tileId += 24;
+            }
+          }
+          // DOWN
+        } else if (down !== cell.color) {
+          if (upright !== cell.color) {
+            if (upleft !== cell.color) {
+              tileId += 31;
+            } else {
+              tileId += 29;
+            }
+          } else if (upleft !== cell.color) {
+            tileId += 30;
+          } else {
+            tileId += 28;
+          }
+        }
+        // DIAGONAL
+      } else if (diagonalNeighbors.some(n => n !== cell.color)) {
+        if (upleft !== cell.color) {
+          tileId = tileId + (1 << 0);
+        }
+        if (upright !== cell.color) {
+          tileId = tileId + (1 << 1);
+        }
+        if (downright !== cell.color) {
+          tileId = tileId + (1 << 2);
+        }
+        if (downleft !== cell.color) {
+          tileId = tileId + (1 << 3);
+        }
+      }
+
+      return tileId;
+    }
+
+    function calculateWall(tileId, cell, y, x, width, height) {
+      // 0, 2, 0, 
+      // 1, 0, 4, 
+      // 0, 3, 0
+      const expandedRows = window.currentExpandedRows;
+
+      const left = (x > 0) ? expandedRows[y][x - 1].color : "#444";
+      const up = (y > 0) ? expandedRows[y - 1][x].color : "#444";
+      const right = (x < width - 1) ? expandedRows[y][x + 1].color : "#444";
+      const down = (y < height - 1) ? expandedRows[y + 1][x].color : "#444";
+      const neighbors = [left, up, right, down];
+
+      if (neighbors.some(n => n !== cell.color)) {
+        if (left !== cell.color) {
+          tileId = tileId + (1 << 0);
+        }
+        if (up !== cell.color) {
+          tileId = tileId + (1 << 1);
+        }
+        if (right !== cell.color) {
+          tileId = tileId + (1 << 2);
+        }
+        if (down !== cell.color) {
+          tileId = tileId + (1 << 3);
+        }
+      }
+
+      return tileId;
+    }
+
+    canvas.addEventListener('click', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = Math.floor((e.clientX - rect.left) / tileSize) * tileSize;
+      const y = Math.floor((e.clientY - rect.top) / tileSize) * tileSize;
+      const type = [...tileTypeRadios].find(r => r.checked).value;
+
+      if (type === 'floor') {
+        const index = selections.floor.findIndex(item => item.x === x && item.y === y);
+        if (index >= 0) {
+          selections.floor.splice(index, 1);
+        } else {
+          selections.floor.push({ x, y });
+        }
+      } else {
+        selections[type] = { x, y };
+      }
+
+      redraw();
+      updatePreviews();
+    });
+
+    function redraw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(image, 0, 0);
+      drawSelection(selections.wall, 'red');
+      drawSelection(selections.ceiling, 'blue');
+      selections.floor.forEach(sel => drawSelection(sel, 'green'));
+    }
+
+    function drawSelection(pos, color) {
+      if (!pos) return;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(pos.x + 1, pos.y + 1, tileSize - 2, tileSize - 2);
+    }
+
+    function updatePreviews() {
+      wallPreview.clearRect(0, 0, 32, 32);
+      ceilingPreview.clearRect(0, 0, 32, 32);
+      if (selections.wall) wallPreview.drawImage(image, selections.wall.x, selections.wall.y, 32, 32, 0, 0, 32, 32);
+      if (selections.ceiling) ceilingPreview.drawImage(image, selections.ceiling.x, selections.ceiling.y, 32, 32, 0, 0, 32, 32);
+
+      floorPreview.innerHTML = '';
+      for (let i = 0; i < 64; i++) {
+        const div = document.createElement('div');
+        div.className = 'preview-tile';
+        if (selections.floor.length > 0) {
+          const tile = selections.floor[Math.floor(Math.random() * selections.floor.length)];
+          div.style.background = `url('dungeon_tiles.png') -${tile.x}px -${tile.y}px`;
+        }
+        floorPreview.appendChild(div);
+      }
+    }
+
+    function renderDungeon(file) {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const json = JSON.parse(event.target.result);
+          const nCols = json.settings.n_cols;
+          window.mapName = json.settings.name;
+          const wallThickness = parseInt(document.getElementById('wallThickness').value) || 1;
+          const cellBit = json.cell_bit;
+          const cells = json.cells;
+          const baseRows = [];
+
+          for (let row = 0; row < cells.length; row++) {
+            const currentRow = [];
+            for (let col = 0; col < cells[row].length; col++) {
+              const cell = cells[row][col];
+              let color = '#000';
+              const isCeil = !cell || (cellBit.block & cell) || (cellBit.perimeter & cell);
+              const isFloor = (cellBit.room & cell) || (cellBit.corridor & cell);
+              const isDoor = (cellBit.door & cell) || (cellBit.secret & cell) || (cellBit.portcullis & cell) || (cellBit.locked & cell);
+
+              if (isDoor) color = '#85ff7a';
+              else if (isFloor) color = '#fff';
+              else if (isCeil) color = '#000';
+              else console.warn(cell, 'have no color', row, col);
+
+              currentRow.push({ col, color });
+            }
+            baseRows.push(currentRow);
+          }
+
+          const expandedRows = [];
+          let r = 0;
+
+          while (r < baseRows.length) {
+            const currentRow = baseRows[r];
+            const belowRow = baseRows[r + 1];
+            if (!belowRow) {
+              expandedRows.push(currentRow);
+              r++;
+              continue;
+            }
+            const needsStretch = currentRow.some((cell, c) => {
+              const below = belowRow[c]?.color || '#000';
+              return (cell.color === '#000') && below === '#fff';
+            });
+            expandedRows.push(currentRow);
+            if (needsStretch) {
+              for (let t = 0; t < wallThickness; t++) {
+                const newRow = currentRow.map((cell, c) => {
+                  const above = currentRow[c]?.color || '#000';
+                  const below = belowRow[c]?.color || '#000';
+
+                  if (above === '#fff' && below === '#fff') return { ...cell, color: '#fff' };
+                  if (above === '#000' && below === '#000') return { ...cell, color: '#000' };
+                  if (above === '#fff' && below === '#85ff7a') return { ...cell, color: '#fff' };
+                  if (above === '#85ff7a' && below === '#fff') return { ...cell, color: '#fff' };
+                  if (above === '#000' && (below === '#fff' || below === '#85ff7a')) return { ...cell, color: '#444' };
+                  return { ...cell };
+                });
+                expandedRows.push(newRow);
+              }
+            }
+            r++;
+          }
+
+          dungeonPreview.width = nCols * previewTileSize;
+          dungeonPreview.height = expandedRows.length * previewTileSize;
+
+          dungeonCtx.fillStyle = '#000';
+          dungeonCtx.fillRect(0, 0, dungeonPreview.width, dungeonPreview.height);
+
+          for (let row = 0; row < expandedRows.length; row++) {
+            for (const cell of expandedRows[row]) {
+              const x = cell.col * previewTileSize;
+              const y = row * previewTileSize;
+              dungeonCtx.fillStyle = cell.color;
+              dungeonCtx.fillRect(x, y, previewTileSize, previewTileSize);
+            }
+          }
+          window.currentExpandedRows = expandedRows;
+        } catch (err) {
+          jsonOutput.value = 'Invalid JSON file.';
+          console.error(err);
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    jsonFileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      renderDungeon(file);
+    });
+
+    document.getElementById('wallThickness').addEventListener('input', () => {
+      const file = jsonFileInput.files[0];
+      if (file) renderDungeon(file);
+    });
+
+  </script>
+
+</body>
+
+</html>
